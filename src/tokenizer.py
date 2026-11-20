@@ -1,9 +1,9 @@
 # Day 1: a character-level tokenizer.
-# Run from inside this folder:  python3 tokenizer.py
+# Run from the project root:  python3 src/tokenizer.py
 
 # "with open(...)" opens a file and closes it again when the block ends.
 # f.read() returns the whole file as one string (a piece of text).
-with open("input.txt", encoding="utf-8") as f:
+with open("data/input.txt", encoding="utf-8") as f:
     text = f.read()
 
 # set(text) keeps each distinct character once.
