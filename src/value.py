@@ -1,5 +1,7 @@
-# Day 8-9: a Value is a number that remembers how it was made, and can pass gradients back.
+# Day 8-10: a Value is a number that remembers how it was made, and can pass gradients back.
 # Run from the project root:  python3 src/value.py
+
+import math
 
 
 # A function that does nothing: plain inputs have nothing to pass back.
@@ -47,6 +49,52 @@ class Value:
         out._backward = _backward
         return out
 
+    # a ** n calls a.__pow__(n). n is a plain number, not a Value.
+    def __pow__(self, n):
+        out = Value(self.data**n, (self,), f"**{n}")
+
+        def _backward():
+            self.grad += n * self.data ** (n - 1) * out.grad  # slope of x^n is n * x^(n-1)
+
+        out._backward = _backward
+        return out
+
+    def exp(self):
+        out = Value(math.exp(self.data), (self,), "exp")
+
+        def _backward():
+            self.grad += out.data * out.grad  # slope of e^x is e^x, which is out itself
+
+        out._backward = _backward
+        return out
+
+    def tanh(self):
+        out = Value(math.tanh(self.data), (self,), "tanh")
+
+        def _backward():
+            self.grad += (1 - out.data**2) * out.grad  # slope of tanh is 1 - tanh^2
+
+        out._backward = _backward
+        return out
+
+    # Run the whole backward pass from this value.
+    def backward(self):
+        order = []  # will hold the values with inputs first and this value last
+        seen = set()  # a set remembers what we visited, so nothing is visited twice
+
+        # Recursion: visit calls itself on each child before adding the value itself.
+        def visit(v):
+            if v not in seen:
+                seen.add(v)
+                for child in v._prev:
+                    visit(child)
+                order.append(v)
+
+        visit(self)
+        self.grad = 1.0  # nudging the output by 1 moves the output by 1
+        for v in reversed(order):  # output first, inputs last
+            v._backward()
+
 
 a = Value(2)
 b = Value(-3)
@@ -61,31 +109,42 @@ assert d._prev == (e, c) and d._op == "+"  # tuples compare item by item
 assert e._prev == (a, b) and e._op == "*"
 assert a._prev == () and a._op == ""  # plain inputs have no history
 
-# Backward pass, in order from the output back: d first, then e.
-d.grad = 1.0  # nudging d by 1 moves d by 1
-d._backward()  # pushes grad to e and c
-e._backward()  # pushes grad to a and b
+# Backward pass: backward() puts the values in order and runs every _backward for us.
+d.backward()
 print("\nafter backward:")
 for name, v in [("a", a), ("b", b), ("c", c), ("e", e), ("d", d)]:
     print(f"  {name}.grad = {v.grad}")
 assert (a.grad, b.grad, c.grad, e.grad) == (-3, 2, 1, 1)
 
-
-# Check against nudging: rebuild d from raw numbers and measure the slope.
-def build(av, bv):
-    return (Value(av) * Value(bv) + Value(10)).data
-
-
-h = 0.001
-print("\nnudged slope in a:", round((build(2 + h, -3) - build(2, -3)) / h, 3))
-print("nudged slope in b:", round((build(2, -3 + h) - build(2, -3)) / h, 3))
-assert abs((build(2 + h, -3) - build(2, -3)) / h - a.grad) < 0.01
-assert abs((build(2, -3 + h) - build(2, -3)) / h - b.grad) < 0.01
-
 # A value used twice: s = x + x, so ds/dx = 2. The two shares add up.
 x = Value(5)
 s = x + x
-s.grad = 1.0
-s._backward()
+s.backward()
 print("\nx used twice, x.grad =", x.grad)
 assert x.grad == 2
+
+# A tiny neuron: o = tanh(x*w + bias). By hand the slope of tanh at 0.5 is 0.786.
+x = Value(0.5)
+w = Value(2)
+bias = Value(-0.5)
+o = (x * w + bias).tanh()
+o.backward()
+print(f"\nneuron: o = {o.data:.4f}")
+print(f"  x.grad = {x.grad:.4f}  w.grad = {w.grad:.4f}  bias.grad = {bias.grad:.4f}")
+assert abs(o.data - 0.4621) < 1e-4
+assert abs(x.grad - 1.5729) < 1e-4 and abs(w.grad - 0.3932) < 1e-4 and abs(bias.grad - 0.7864) < 1e-4
+
+
+# Check backward() against nudging, on a function where x feeds several paths.
+def f(v):
+    return (v**2 + v.exp()).tanh()
+
+
+x0 = 0.3
+x = Value(x0)
+out = f(x)
+out.backward()
+h = 0.0001
+nudged = (f(Value(x0 + h)).data - f(Value(x0)).data) / h
+print(f"\ndf/dx at {x0}: backward {x.grad:.5f}, nudged {nudged:.5f}")
+assert abs(x.grad - nudged) < 1e-3
