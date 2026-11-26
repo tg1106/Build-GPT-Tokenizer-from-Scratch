@@ -25,6 +25,7 @@ class Value:
 
     # a + b calls a.__add__(b). The result remembers both inputs and the "+".
     def __add__(self, other):
+        other = other if isinstance(other, Value) else Value(other)  # let plain numbers in
         out = Value(self.data + other.data, (self, other), "+")
 
         # A function defined inside a method remembers self, other and out (a closure).
@@ -39,6 +40,7 @@ class Value:
 
     # a * b calls a.__mul__(b).
     def __mul__(self, other):
+        other = other if isinstance(other, Value) else Value(other)
         out = Value(self.data * other.data, (self, other), "*")
 
         def _backward():
@@ -48,6 +50,19 @@ class Value:
 
         out._backward = _backward
         return out
+
+    # -a, a - b, and number + a, number * a (the "r" versions run when the number is on the left).
+    def __neg__(self):
+        return self * -1
+
+    def __sub__(self, other):
+        return self + (-other)
+
+    def __radd__(self, other):
+        return self + other
+
+    def __rmul__(self, other):
+        return self * other
 
     # a ** n calls a.__pow__(n). n is a plain number, not a Value.
     def __pow__(self, n):
@@ -96,55 +111,57 @@ class Value:
             v._backward()
 
 
-a = Value(2)
-b = Value(-3)
-c = Value(10)
-e = a * b  # -6, made from (a, b) by *
-d = e + c  # 4, made from (e, c) by +
-print("e:", e, "| op:", e._op, "| made from:", e._prev)
-print("d:", d, "| op:", d._op, "| made from:", d._prev)
+# The demo below runs only when this file is run directly, not when another file imports Value.
+if __name__ == "__main__":
+    a = Value(2)
+    b = Value(-3)
+    c = Value(10)
+    e = a * b  # -6, made from (a, b) by *
+    d = e + c  # 4, made from (e, c) by +
+    print("e:", e, "| op:", e._op, "| made from:", e._prev)
+    print("d:", d, "| op:", d._op, "| made from:", d._prev)
 
-assert e.data == -6 and d.data == 4
-assert d._prev == (e, c) and d._op == "+"  # tuples compare item by item
-assert e._prev == (a, b) and e._op == "*"
-assert a._prev == () and a._op == ""  # plain inputs have no history
+    assert e.data == -6 and d.data == 4
+    assert d._prev == (e, c) and d._op == "+"  # tuples compare item by item
+    assert e._prev == (a, b) and e._op == "*"
+    assert a._prev == () and a._op == ""  # plain inputs have no history
 
-# Backward pass: backward() puts the values in order and runs every _backward for us.
-d.backward()
-print("\nafter backward:")
-for name, v in [("a", a), ("b", b), ("c", c), ("e", e), ("d", d)]:
-    print(f"  {name}.grad = {v.grad}")
-assert (a.grad, b.grad, c.grad, e.grad) == (-3, 2, 1, 1)
+    # Backward pass: backward() puts the values in order and runs every _backward for us.
+    d.backward()
+    print("\nafter backward:")
+    for name, v in [("a", a), ("b", b), ("c", c), ("e", e), ("d", d)]:
+        print(f"  {name}.grad = {v.grad}")
+    assert (a.grad, b.grad, c.grad, e.grad) == (-3, 2, 1, 1)
 
-# A value used twice: s = x + x, so ds/dx = 2. The two shares add up.
-x = Value(5)
-s = x + x
-s.backward()
-print("\nx used twice, x.grad =", x.grad)
-assert x.grad == 2
+    # A value used twice: s = x + x, so ds/dx = 2. The two shares add up.
+    x = Value(5)
+    s = x + x
+    s.backward()
+    print("\nx used twice, x.grad =", x.grad)
+    assert x.grad == 2
 
-# A tiny neuron: o = tanh(x*w + bias). By hand the slope of tanh at 0.5 is 0.786.
-x = Value(0.5)
-w = Value(2)
-bias = Value(-0.5)
-o = (x * w + bias).tanh()
-o.backward()
-print(f"\nneuron: o = {o.data:.4f}")
-print(f"  x.grad = {x.grad:.4f}  w.grad = {w.grad:.4f}  bias.grad = {bias.grad:.4f}")
-assert abs(o.data - 0.4621) < 1e-4
-assert abs(x.grad - 1.5729) < 1e-4 and abs(w.grad - 0.3932) < 1e-4 and abs(bias.grad - 0.7864) < 1e-4
-
-
-# Check backward() against nudging, on a function where x feeds several paths.
-def f(v):
-    return (v**2 + v.exp()).tanh()
+    # A tiny neuron: o = tanh(x*w + bias). By hand the slope of tanh at 0.5 is 0.786.
+    x = Value(0.5)
+    w = Value(2)
+    bias = Value(-0.5)
+    o = (x * w + bias).tanh()
+    o.backward()
+    print(f"\nneuron: o = {o.data:.4f}")
+    print(f"  x.grad = {x.grad:.4f}  w.grad = {w.grad:.4f}  bias.grad = {bias.grad:.4f}")
+    assert abs(o.data - 0.4621) < 1e-4
+    assert abs(x.grad - 1.5729) < 1e-4 and abs(w.grad - 0.3932) < 1e-4 and abs(bias.grad - 0.7864) < 1e-4
 
 
-x0 = 0.3
-x = Value(x0)
-out = f(x)
-out.backward()
-h = 0.0001
-nudged = (f(Value(x0 + h)).data - f(Value(x0)).data) / h
-print(f"\ndf/dx at {x0}: backward {x.grad:.5f}, nudged {nudged:.5f}")
-assert abs(x.grad - nudged) < 1e-3
+    # Check backward() against nudging, on a function where x feeds several paths.
+    def f(v):
+        return (v**2 + v.exp()).tanh()
+
+
+    x0 = 0.3
+    x = Value(x0)
+    out = f(x)
+    out.backward()
+    h = 0.0001
+    nudged = (f(Value(x0 + h)).data - f(Value(x0)).data) / h
+    print(f"\ndf/dx at {x0}: backward {x.grad:.5f}, nudged {nudged:.5f}")
+    assert abs(x.grad - nudged) < 1e-3
